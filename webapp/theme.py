@@ -98,6 +98,19 @@ div[data-testid="stMetric"] {
     border-radius: 8px;
     padding: 10px 14px;
 }
+
+/* ---------------- Anchored Chat Input & Smooth Scroll ---------------- */
+html {
+    scroll-behavior: smooth;
+}
+
+div[data-testid="stChatInput"] {
+    position: sticky;
+    bottom: 0px;
+    z-index: 99;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
 </style>
 """
 

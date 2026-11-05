@@ -225,6 +225,18 @@ class ReviewPageTests(WebCase):
         self.review(at)
         self.assertIn("HIGH EFFORT", self.chat.calls[0]["system"])
 
+    def test_focus_selector_and_patch_download(self) -> None:
+        self.chat = FakeChat([payload(issue())])
+        at = self.app()
+        self.assertTrue(at.selectbox(key="review_focus"))
+        at.selectbox(key="review_focus").select("Security & OWASP (Vulnerabilities & injection)")
+        self.review(at)
+        self.assertIn("SECURITY & VULNERABILITY AUDIT", self.chat.calls[0]["system"])
+        self.assertTrue(any(e.label == "📋 Unified Diff Patch" for e in at.expander))
+        self.assertTrue(any(e.label == "📋 Corrected Code" for e in at.expander))
+        self.assertIsNotNone(at.download_button(key="review_patch_download"))
+        self.assertFalse(any(b.key == "review_patched_file_download" for b in at.download_button))
+
 
 class RepoPageTests(WebCase):
     def test_empty_state(self) -> None:
@@ -377,6 +389,8 @@ class RepoPageTests(WebCase):
     def test_knowledge_graph_path_finder_and_hubs(self) -> None:
         at = self.go_to_repo_page(self.app())
         self.index_demo(at)
+        self.assertFalse(at.toggle(key="kg_enable_visual_graph").value)
+        at.toggle(key="kg_enable_visual_graph").set_value(True).run()
         self.assertIsNotNone(at.selectbox(key="kg_vis_seed"))
         self.assertIsNotNone(at.selectbox(key="kg_path_src"))
         self.assertIsNotNone(at.selectbox(key="kg_path_dst"))

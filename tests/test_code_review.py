@@ -335,6 +335,39 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("standard input", out)
 
+    def test_cli_diff_and_focus(self) -> None:
+        code, out, err = self.run_cli(str(self.file), "--diff", "--focus", "security")
+        self.assertEqual(code, 0, err)
+        self.assertIn("--- a/stats.py", out)
+        self.assertIn("+++ b/stats.py", out)
+
+    def test_focus_profile_controls_prompt(self) -> None:
+        chat = FakeChat([payload(issue())])
+        reviewer = CodeReviewer(chat, Config())
+        reviewer.review(CODE, focus="security")
+        sys_prompt = chat.calls[0]["system"]
+        self.assertIn("SECURITY & VULNERABILITY AUDIT", sys_prompt)
+
+        chat2 = FakeChat([payload(issue())])
+        reviewer2 = CodeReviewer(chat2, Config())
+        reviewer2.review(CODE, focus="performance")
+        self.assertIn("PERFORMANCE & RESOURCE EFFICIENCY", chat2.calls[0]["system"])
+
+    def test_unified_diff_and_patched_code(self) -> None:
+        chat = FakeChat([payload(issue(line_start=3, line_end=3, minimal_fix="    # Fix: avoid index error\n    for i in range(len(numbers)):  # Fixed off-by-one"))])
+        reviewer = CodeReviewer(chat, Config())
+        result = reviewer.review(CODE, filename="stats.py")
+        diff = result.unified_diff()
+        self.assertIn("--- a/stats.py", diff)
+        self.assertIn("+++ b/stats.py", diff)
+        self.assertIn("-    for i in range(len(numbers) + 1):", diff)
+        self.assertIn("+    for i in range(len(numbers)):", diff)
+        patched = result.patched_code()
+        self.assertIn("for i in range(len(numbers)):", patched)
+        self.assertNotIn("for i in range(len(numbers) + 1):", patched)
+        self.assertNotIn("# Fix: avoid index error", patched)
+        self.assertNotIn("# Fixed off-by-one", patched)
+
     def test_errors(self) -> None:
         self.assertEqual(self.run_cli(str(Path(self._tmp.name) / "missing.py"))[0], 1)
         code, _, err = self.run_cli("-", stdin="   ")

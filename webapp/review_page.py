@@ -38,6 +38,27 @@ def _get_effort(raw: str | None) -> str:
     return "medium"
 
 
+FOCUS_CHOICES = [
+    "General (Balanced review)",
+    "Security & OWASP (Vulnerabilities & injection)",
+    "Performance (Complexity & resource leaks)",
+    "Clean Code (SOLID, architecture & refactoring)",
+]
+
+
+def _get_focus(raw: str | None) -> str:
+    if not raw:
+        return "general"
+    lowered = raw.lower()
+    if "security" in lowered:
+        return "security"
+    if "performance" in lowered:
+        return "performance"
+    if "clean" in lowered:
+        return "clean_code"
+    return "general"
+
+
 def _load_example() -> None:
     st.session_state["review_code"] = EXAMPLE_CODE
     st.session_state["review_problem"] = "average([]) crashes"
@@ -65,9 +86,22 @@ def render() -> None:
                 help="High effort prompts the model for comprehensive root cause analysis, edge cases, failure scenarios, and complete fixes.",
             )
         with top_b:
-            active_effort = _get_effort(st.session_state.get("review_effort"))
-            st.write("")
-            st.caption(f"**Depth mode:** {active_effort.capitalize()} effort active")
+            st.selectbox(
+                "Review focus profile",
+                FOCUS_CHOICES,
+                index=0,
+                key="review_focus",
+                help="Focus the reviewer on a specific quality domain like security, performance, or clean code architecture.",
+            )
+        active_effort = _get_effort(st.session_state.get("review_effort"))
+        active_focus = _get_focus(st.session_state.get("review_focus"))
+        focus_labels = {
+            "general": "General Review",
+            "security": "Security & OWASP",
+            "performance": "Performance & Scalability",
+            "clean_code": "Clean Code & Refactoring",
+        }
+        st.caption(f"**Mode:** {active_effort.capitalize()} effort · **Focus:** {focus_labels.get(active_focus, 'General')}")
 
         left, right = st.columns([3, 2])
         with left:
@@ -99,12 +133,14 @@ def _run_review(cfg) -> None:
         code, filename = uploaded.getvalue().decode("utf-8", errors="replace"), uploaded.name
         st.info(f"Reviewing the uploaded file {filename} instead of the text box.")
     effort = _get_effort(st.session_state.get("review_effort"))
+    focus = _get_focus(st.session_state.get("review_focus"))
     try:
-        with st.spinner(f"Reviewing code with {effort.upper()} effort ... (local models take ~30-60s)"):
+        with st.spinner(f"Reviewing code with {effort.upper()} effort ({focus.replace('_', ' ')}) ..."):
             reviewer = CodeReviewer(resources.get_chat(cfg), cfg)
             result = reviewer.review(
                 code, language=st.session_state.get("review_language"),
-                problem=st.session_state.get("review_problem"), filename=filename, effort=effort,
+                problem=st.session_state.get("review_problem"), filename=filename,
+                effort=effort, focus=focus,
             )
     except (ChatbotError, ValueError) as exc:
         st.session_state.pop("review_result", None)
@@ -140,39 +176,59 @@ def _show_result(result) -> None:
                         if index:
                             st.divider()
                         st.markdown(issue_markdown(issue, result.language))
+
+        diff = result.unified_diff()
+        if diff:
+            with st.expander("📋 Unified Diff Patch", expanded=True):
+                st.caption("Standard git-compatible unified diff patch applying all recommended fixes.")
+                st.code(diff, language="diff")
+                st.download_button(
+                    "Download Patch (.patch)",
+                    diff,
+                    file_name=f"{result.filename or 'fix'}.patch",
+                    mime="text/x-diff",
+                    key="review_patch_download",
+                )
+            with st.expander("📋 Corrected Code", expanded=True):
+                lang = result.language if result.language != "code" else None
+                st.code(result.patched_code(), language=lang)
+
         st.download_button("Download the review (Markdown)", review_markdown(result), file_name="review.md",
                            mime="text/markdown", key="review_download")
 
 
 def _followup_chat(cfg, result) -> None:
     st.subheader("Ask about this review")
-    with st.container(border=True):
-        effort = _get_effort(st.session_state.get("review_effort"))
-        st.caption(f"Active discussion effort: **{effort.capitalize()}**")
-        messages = st.session_state.setdefault("review_chat", [])
+    effort = _get_effort(st.session_state.get("review_effort"))
+    focus = result.focus
+    st.caption(f"Active discussion effort: **{effort.capitalize()}** · Focus: **{focus.replace('_', ' ').capitalize()}**")
+    messages = st.session_state.setdefault("review_chat", [])
+
+    chat_box = st.container()
+    question = st.chat_input("e.g. why is the first issue critical? show me a fixed version", key="review_chat_input")
+
+    with chat_box:
         for message in messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-        question = st.chat_input("e.g. why is the first issue critical? show me a fixed version", key="review_chat_input")
-        if not question:
-            return
-        history = [  # failed exchanges are shown on screen but never sent back to the model
-            (messages[i]["content"], messages[i + 1]["content"])
-            for i in range(0, len(messages) - 1, 2)
-            if not messages[i + 1].get("error")
-        ]
-        with st.chat_message("user"):
-            st.markdown(question)
-        with st.chat_message("assistant"):
-            try:
-                reviewer = CodeReviewer(resources.get_chat(cfg), cfg)
-                answer = st.write_stream(reviewer.followup_stream(result, question, history, effort=effort))
-            except (ChatbotError, ValueError) as exc:
-                message = f"{type(exc).__name__}: {exc}"
-                st.error(message)
-                messages.append({"role": "user", "content": question})
-                messages.append({"role": "assistant", "content": f"**Error.** {message}", "error": True})
-                return
-        messages.append({"role": "user", "content": question})
-        messages.append({"role": "assistant", "content": answer})
+        if question:
+            history = [  # failed exchanges are shown on screen but never sent back to the model
+                (messages[i]["content"], messages[i + 1]["content"])
+                for i in range(0, len(messages) - 1, 2)
+                if not messages[i + 1].get("error")
+            ]
+            with st.chat_message("user"):
+                st.markdown(question)
+            with st.chat_message("assistant"):
+                try:
+                    reviewer = CodeReviewer(resources.get_chat(cfg), cfg)
+                    answer = st.write_stream(reviewer.followup_stream(result, question, history, effort=effort, focus=focus))
+                except (ChatbotError, ValueError) as exc:
+                    message = f"{type(exc).__name__}: {exc}"
+                    st.error(message)
+                    messages.append({"role": "user", "content": question})
+                    messages.append({"role": "assistant", "content": f"**Error.** {message}", "error": True})
+                    return
+            messages.append({"role": "user", "content": question})
+            messages.append({"role": "assistant", "content": answer})

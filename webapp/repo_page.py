@@ -188,42 +188,45 @@ def _graph_explorer(chat: RepoChat) -> None:
 # ---------------------------------------------------------------- the conversation
 def _conversation(chat: RepoChat) -> None:
     messages = st.session_state.setdefault("repo_messages", [])
-    for message in messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if message.get("answer") is not None:
-                _show_sources(message["answer"], show_context=bool(st.session_state.get("repo_show_context")))
+    chat_box = st.container()
     question = st.chat_input("Ask about this repository, e.g. Where is authentication handled?", key="repo_chat_input")
-    if not question:
-        return
-    with st.chat_message("user"):
-        st.markdown(question)
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        pieces: list[str] = []
 
-        def on_token(piece: str) -> None:
-            pieces.append(piece)
-            placeholder.markdown("".join(pieces) + "▌")
+    with chat_box:
+        for message in messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                if message.get("answer") is not None:
+                    _show_sources(message["answer"], show_context=bool(st.session_state.get("repo_show_context")))
 
-        effort = _get_effort(st.session_state.get("repo_effort"))
-        try:
-            answer = chat.ask(
-                question, use_graph=bool(st.session_state.get("repo_use_graph", True)),
-                mode=st.session_state.get("repo_mode", "hybrid"), effort=effort, on_token=on_token,
-            )
-        except (ChatbotError, ValueError) as exc:
-            placeholder.empty()
-            message = f"{type(exc).__name__}: {exc}"
-            st.error(message)
-            # Keep the failed exchange on screen (the model's memory of the chat is not touched).
+        if question:
+            with st.chat_message("user"):
+                st.markdown(question)
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                pieces: list[str] = []
+
+                def on_token(piece: str) -> None:
+                    pieces.append(piece)
+                    placeholder.markdown("".join(pieces) + "▌")
+
+                effort = _get_effort(st.session_state.get("repo_effort"))
+                try:
+                    answer = chat.ask(
+                        question, use_graph=bool(st.session_state.get("repo_use_graph", True)),
+                        mode=st.session_state.get("repo_mode", "hybrid"), effort=effort, on_token=on_token,
+                    )
+                except (ChatbotError, ValueError) as exc:
+                    placeholder.empty()
+                    message = f"{type(exc).__name__}: {exc}"
+                    st.error(message)
+                    # Keep the failed exchange on screen (the model's memory of the chat is not touched).
+                    messages.append({"role": "user", "content": question, "answer": None})
+                    messages.append({"role": "assistant", "content": f"**Error.** {message}", "answer": None, "error": True})
+                    return
+                placeholder.markdown(answer.text)
+                _show_sources(answer, show_context=bool(st.session_state.get("repo_show_context")))
             messages.append({"role": "user", "content": question, "answer": None})
-            messages.append({"role": "assistant", "content": f"**Error.** {message}", "answer": None, "error": True})
-            return
-        placeholder.markdown(answer.text)
-        _show_sources(answer, show_context=bool(st.session_state.get("repo_show_context")))
-    messages.append({"role": "user", "content": question, "answer": None})
-    messages.append({"role": "assistant", "content": answer.text, "answer": answer})
+            messages.append({"role": "assistant", "content": answer.text, "answer": answer})
 
 
 def _show_sources(answer, *, show_context: bool) -> None:
@@ -268,8 +271,18 @@ def _render_graph_structure(chat: RepoChat) -> None:
     m3.metric("Functions & Classes", counts["nodes"].get("Function", 0) + counts["nodes"].get("Class", 0))
     m4.metric("Source Files", counts["nodes"].get("File", 0))
 
-    graph_tab_vis, graph_tab_hubs, graph_tab_path, graph_tab_nodes, graph_tab_edges, graph_tab_stats = st.tabs([
-        "🕸️ Visual Graph Explorer",
+    with st.expander("⚙️ Advanced Graph Settings", expanded=False):
+        show_visual = st.toggle(
+            "Enable Interactive Visual Graph Canvas",
+            value=st.session_state.get("kg_enable_visual_graph", False),
+            key="kg_enable_visual_graph",
+            help="Show the interactive force-directed HTML5 canvas graph explorer.",
+        )
+
+    tab_titles = []
+    if show_visual:
+        tab_titles.append("🕸️ Visual Graph Explorer")
+    tab_titles.extend([
         "🏛️ Architecture Hubs",
         "🔍 Call Chain & Path Finder",
         f"📦 Nodes Table ({total_nodes})",
@@ -277,37 +290,48 @@ def _render_graph_structure(chat: RepoChat) -> None:
         "📊 Summary Statistics",
     ])
 
-    with graph_tab_vis:
-        st.markdown("**Interactive Knowledge Graph Visualization**")
-        st.caption(
-            "Explore nodes (functions, classes, files) and dependency relationships. "
-            "Drag nodes to rearrange, scroll to zoom, click to highlight connections."
-        )
-        ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 1, 1])
-        with ctrl_col1:
-            all_symbols = ["All (Top Architecture Hubs)"] + [graph.label(nid) for nid, d in graph.nodes() if d.get("type") in ("Function", "Class", "File")]
-            seed_choice = ctrl_col1.selectbox("Focus / Seed Symbol", all_symbols, key="kg_vis_seed")
-        with ctrl_col2:
-            hops = ctrl_col2.slider("Neighborhood Hops", min_value=1, max_value=3, value=1, key="kg_vis_hops")
-        with ctrl_col3:
-            min_conf = ctrl_col3.selectbox("Min Confidence", ["guess", "likely", "certain"], index=0, key="kg_vis_conf")
+    tabs = st.tabs(tab_titles)
+    tab_idx = 0
+    if show_visual:
+        graph_tab_vis = tabs[tab_idx]
+        tab_idx += 1
+        with graph_tab_vis:
+            st.markdown("**Interactive Knowledge Graph Visualization**")
+            st.caption(
+                "Explore nodes (functions, classes, files) and dependency relationships. "
+                "Drag nodes to rearrange, scroll to zoom, click to highlight connections."
+            )
+            ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 1, 1])
+            with ctrl_col1:
+                all_symbols = ["All (Top Architecture Hubs)"] + [graph.label(nid) for nid, d in graph.nodes() if d.get("type") in ("Function", "Class", "File")]
+                seed_choice = ctrl_col1.selectbox("Focus / Seed Symbol", all_symbols, key="kg_vis_seed")
+            with ctrl_col2:
+                hops = ctrl_col2.slider("Neighborhood Hops", min_value=1, max_value=3, value=1, key="kg_vis_hops")
+            with ctrl_col3:
+                min_conf = ctrl_col3.selectbox("Min Confidence", ["guess", "likely", "certain"], index=0, key="kg_vis_conf")
 
-        seeds = None
-        if seed_choice != "All (Top Architecture Hubs)":
-            matches = graph.find(seed_choice.split("::")[-1])
-            if matches:
-                seeds = matches[:2]
+            seeds = None
+            if seed_choice != "All (Top Architecture Hubs)":
+                matches = graph.find(seed_choice.split("::")[-1])
+                if matches:
+                    seeds = matches[:2]
 
-        subgraph_data = graph.subgraph_for_visualization(
-            seeds=seeds,
-            hops=hops,
-            max_nodes=50,
-            min_confidence=min_conf,
-        )
+            subgraph_data = graph.subgraph_for_visualization(
+                seeds=seeds,
+                hops=hops,
+                max_nodes=50,
+                min_confidence=min_conf,
+            )
 
-        import streamlit.components.v1 as components
-        canvas_html = render_interactive_graph_html(subgraph_data, height=540)
-        components.html(canvas_html, height=560)
+            import streamlit.components.v1 as components
+            canvas_html = render_interactive_graph_html(subgraph_data, height=540)
+            components.html(canvas_html, height=560)
+
+    graph_tab_hubs = tabs[tab_idx]
+    graph_tab_path = tabs[tab_idx + 1]
+    graph_tab_nodes = tabs[tab_idx + 2]
+    graph_tab_edges = tabs[tab_idx + 3]
+    graph_tab_stats = tabs[tab_idx + 4]
 
     with graph_tab_hubs:
         st.markdown("**Key Architecture Hubs**")

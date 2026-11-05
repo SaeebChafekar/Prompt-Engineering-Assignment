@@ -50,6 +50,7 @@ REVIEW_SCHEMA: dict[str, Any] = {
             "items": {"type": "object", "properties": _ISSUE_PROPERTIES, "required": list(_ISSUE_PROPERTIES)},
         },
         "verdict": {"type": "string"},
+        "patched_code": {"type": "string"},
     },
     "required": ["summary", "issues", "verdict"],
 }
@@ -77,6 +78,7 @@ class Review:
     summary: str
     issues: tuple[Issue, ...] = ()
     verdict: str = ""
+    patched_code: str = ""
 
     def counts(self) -> dict[str, int]:
         counts = {name: 0 for name in SEVERITIES}
@@ -85,11 +87,14 @@ class Review:
         return counts
 
     def to_dict(self) -> dict[str, Any]:
-        return {"summary": self.summary, "issues": [asdict(i) for i in self.issues], "verdict": self.verdict}
+        data = {"summary": self.summary, "issues": [asdict(i) for i in self.issues], "verdict": self.verdict}
+        if self.patched_code:
+            data["patched_code"] = self.patched_code
+        return data
 
     def with_issue(self, issue: Issue) -> "Review":
         """A copy with one more issue, kept in severity/line order."""
-        return Review(self.summary, _sorted((*self.issues, issue)), self.verdict)
+        return Review(self.summary, _sorted((*self.issues, issue)), self.verdict, self.patched_code)
 
     @classmethod
     def from_payload(cls, payload: Any, line_count: int, effort: str = "medium") -> "Review":
@@ -117,7 +122,9 @@ class Review:
             if key not in seen:
                 seen.add(key)
                 issues.append(issue)
-        return cls(summary, _sorted(issues), verdict)
+        raw_patched = payload.get("patched_code")
+        patched_code = raw_patched.strip() if isinstance(raw_patched, str) else ""
+        return cls(summary, _sorted(issues), verdict, patched_code)
 
 
 def _text(value: Any, field_name: str, limits: dict[str, int] = MAX_TEXT) -> str:

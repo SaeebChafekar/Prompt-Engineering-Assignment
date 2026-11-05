@@ -60,6 +60,26 @@ _LANGUAGE_HINTS: dict[str, list[tuple[str, int]]] = {
 }
 
 
+_COMMENT_FIX_PREFIX = re.compile(
+    r"^\s*(?:#|//|/\*)\s*(?:fix|fixed|correction|note|solution|changed|remediation)\b",
+    re.IGNORECASE,
+)
+_INLINE_FIX_COMMENT = re.compile(
+    r"\s+(?:#|//)\s*(?:fix|fixed|correction|note|solution|changed|remediation)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _clean_fix_text(text: str) -> str:
+    """Strip explanatory fix comments added by models (e.g. '# Fix: bounds check')."""
+    cleaned = []
+    for line in text.splitlines():
+        if _COMMENT_FIX_PREFIX.match(line):
+            continue
+        cleaned.append(_INLINE_FIX_COMMENT.sub("", line))
+    return "\n".join(cleaned)
+
+
 @dataclass(frozen=True)
 class ReviewResult:
     review: Review
@@ -70,6 +90,57 @@ class ReviewResult:
     parser_note: str | None = None
     attempts: int = 1  # 2 means the first model reply was unusable and a retry succeeded
     effort: str = "medium"
+    focus: str = "general"
+    filename: str | None = None
+
+    def patched_code(self) -> str:
+        """Return the source code with all recommended fixes applied (clean code, no added comments)."""
+        if self.review.patched_code and self.review.patched_code.strip():
+            raw = self.review.patched_code.strip()
+            if raw.startswith("```"):
+                lines_p = raw.splitlines()
+                if len(lines_p) >= 2 and lines_p[-1].strip() == "```":
+                    raw = "\n".join(lines_p[1:-1]).strip()
+            return _clean_fix_text(raw)
+        lines = self.code.splitlines(keepends=True)
+        applicable_issues = [
+            i for i in self.review.issues
+            if i.minimal_fix and 1 <= i.line_start <= len(lines)
+        ]
+        if not applicable_issues:
+            return self.code
+
+        sorted_issues = sorted(applicable_issues, key=lambda i: (-i.line_start, -i.line_end))
+        patched_lines = list(lines)
+        for issue in sorted_issues:
+            start_idx = max(0, issue.line_start - 1)
+            end_idx = min(len(patched_lines), issue.line_end)
+            fix_content = _clean_fix_text(issue.minimal_fix).strip("\r\n")
+            if not fix_content:
+                continue
+            orig_line = lines[start_idx] if start_idx < len(lines) else ""
+            indent = orig_line[:len(orig_line) - len(orig_line.lstrip())]
+            if indent and not fix_content.startswith((" ", "\t")):
+                fix_content = "\n".join(indent + l if l.strip() else l for l in fix_content.splitlines())
+            if not fix_content.endswith("\n"):
+                fix_content += "\n"
+            patched_lines[start_idx:end_idx] = [fix_content]
+        return "".join(patched_lines)
+
+    def unified_diff(self) -> str:
+        """Return unified diff comparing original code to patched code."""
+        patched = self.patched_code()
+        if not patched or patched.strip() == self.code.strip():
+            return ""
+        import difflib
+        fname = self.filename or f"code.{self.language}"
+        diff = difflib.unified_diff(
+            self.code.splitlines(keepends=True),
+            patched.splitlines(keepends=True),
+            fromfile=f"a/{fname}",
+            tofile=f"b/{fname}",
+        )
+        return "".join(diff)
 
 
 def detect_language(code: str, filename: str | None = None, hint: str | None = None) -> str:
@@ -148,6 +219,7 @@ class CodeReviewer:
         problem: str | None = None,
         filename: str | None = None,
         effort: str = "medium",
+        focus: str = "general",
     ) -> ReviewResult:
         """Review pasted code. Raises ValueError for bad input and ChatbotError subclasses for
         model, network or timeout failures (InvalidOutputError if the model never produces a usable review)."""
@@ -164,15 +236,20 @@ class CodeReviewer:
             parser_note, parser_issue = python_syntax_issue(text)
 
         messages = [{"role": "user", "content": build_review_message(lang, numbered, problem, parser_note)}]
-        review, attempts = self._ask_model(messages, line_count, effort=effort)
+        review, attempts = self._ask_model(messages, line_count, effort=effort, focus=focus)
         if parser_issue is not None and not any(
             i.line_start == parser_issue.line_start and "syntax" in (i.title + i.problem).lower() for i in review.issues
         ):
             review = review.with_issue(parser_issue)
-        return ReviewResult(review, text, numbered, lang, line_count, parser_note, attempts, effort=effort)
+        return ReviewResult(
+            review, text, numbered, lang, line_count, parser_note, attempts,
+            effort=effort, focus=focus, filename=filename,
+        )
 
-    def _ask_model(self, messages: list[dict[str, str]], line_count: int, effort: str = "medium") -> tuple[Review, int]:
-        system_prompt = get_review_system_prompt(effort)
+    def _ask_model(
+        self, messages: list[dict[str, str]], line_count: int, effort: str = "medium", focus: str = "general"
+    ) -> tuple[Review, int]:
+        system_prompt = get_review_system_prompt(effort, focus)
         if self.chat.backend_name == "ollama":
             max_tokens = 4096 if effort == "high" else LOCAL_MAX_TOKENS
         else:
@@ -192,7 +269,12 @@ class CodeReviewer:
 
     # ------------------------------------------------------------ follow-up chat
     def followup_stream(
-        self, result: ReviewResult, question: str, history: Sequence[tuple[str, str]] = (), effort: str = "medium"
+        self,
+        result: ReviewResult,
+        question: str,
+        history: Sequence[tuple[str, str]] = (),
+        effort: str = "medium",
+        focus: str = "general",
     ) -> Iterator[str]:
         """Answer a question about a finished review, streaming the reply."""
         text = question.strip()
@@ -203,7 +285,7 @@ class CodeReviewer:
         message = build_followup_message(
             result.numbered_code, json.dumps(result.review.to_dict(), ensure_ascii=False), list(history), text
         )
-        system_prompt = get_followup_system_prompt(effort)
+        system_prompt = get_followup_system_prompt(effort, focus)
         max_tokens = 4096 if effort == "high" else None
         return self.chat.chat_stream([{"role": "user", "content": message}], system=system_prompt, max_tokens=max_tokens)
 
@@ -214,13 +296,15 @@ class CodeReviewer:
         history: Sequence[tuple[str, str]] = (),
         on_token: Callable[[str], None] | None = None,
         effort: str = "medium",
+        focus: str = "general",
     ) -> str:
         pieces: list[str] = []
-        for piece in self.followup_stream(result, question, history, effort=effort):
+        for piece in self.followup_stream(result, question, history, effort=effort, focus=focus):
             pieces.append(piece)
             if on_token:
                 on_token(piece)
         answer = "".join(pieces).strip()
         if not answer:
             raise InvalidOutputError("The model returned an empty answer. Try asking again.")
+        return answer
         return answer

@@ -33,4 +33,7 @@ def review_markdown(result: ReviewResult, title: str = "Code review") -> str:
             out += ["", f"## {SEVERITY_LABELS[severity]} ({len(group)})"]
             for issue in group:
                 out += ["", issue_markdown(issue, result.language)]
+    diff = result.unified_diff()
+    if diff:
+        out += ["", "## Unified Diff Patch", "```diff", diff.strip(), "```"]
     return "\n".join(out) + "\n"

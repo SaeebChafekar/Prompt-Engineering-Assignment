@@ -27,6 +27,9 @@ def main(argv: list[str] | None = None, *, chat_factory=create_chat_client, stdi
     parser.add_argument("--problem", help="what is going wrong (error message or expected behaviour)")
     parser.add_argument("--language", help="python, javascript, ... (default: detect)")
     parser.add_argument("--effort", choices=["low", "medium", "high"], default="medium", help="effort level / analysis depth")
+    parser.add_argument("--focus", choices=["general", "security", "performance", "clean_code"], default="general", help="review focus profile")
+    parser.add_argument("--diff", action="store_true", help="print unified diff patch only")
+    parser.add_argument("--patch-out", type=Path, help="save the patched code to this file")
     parser.add_argument("--json", action="store_true", help="print the review as JSON")
     args = parser.parse_args(argv)
 
@@ -47,7 +50,7 @@ def main(argv: list[str] | None = None, *, chat_factory=create_chat_client, stdi
         chat = chat_factory(cfg)
         chat.health_check()
         result = CodeReviewer(chat, cfg).review(
-            code, language=args.language, problem=args.problem, filename=filename, effort=args.effort
+            code, language=args.language, problem=args.problem, filename=filename, effort=args.effort, focus=args.focus,
         )
     except (ChatbotError, ValueError) as exc:
         print(f"ERROR ({type(exc).__name__}): {exc}", file=sys.stderr)
@@ -59,7 +62,17 @@ def main(argv: list[str] | None = None, *, chat_factory=create_chat_client, stdi
         if chat is not None:
             chat.close()
 
-    if args.json:
+    if args.patch_out:
+        args.patch_out.write_text(result.patched_code(), encoding="utf-8")
+        print(f"Patched code saved to {args.patch_out}")
+
+    if args.diff:
+        diff = result.unified_diff()
+        if diff:
+            print(diff, end="")
+        else:
+            print("No changes (no fixes to apply).")
+    elif args.json:
         print(json.dumps(result.review.to_dict(), indent=2, ensure_ascii=False))
     else:
         print(review_markdown(result, title=f"Review of {filename or 'standard input'}"))

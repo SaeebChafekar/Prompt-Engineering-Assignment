@@ -199,6 +199,46 @@ class NeighborTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.g.neighbors([F("a")], direction="sideways")
 
+    def test_shortest_path(self) -> None:
+        # main -> a -> b -> c
+        path = self.g.shortest_path(F("main"), F("c"))
+        self.assertIsNotNone(path)
+        self.assertEqual(path["hops"], 1)  # main -> c direct guess edge exists
+        self.assertEqual(path["source_id"], F("main"))
+        self.assertEqual(path["target_id"], F("c"))
+
+        # From c to main directed should fail
+        rev = self.g.shortest_path(F("c"), F("main"), directed=True)
+        self.assertIsNone(rev)
+
+        # From c to main undirected should succeed
+        undir = self.g.shortest_path(F("c"), F("main"), directed=False)
+        self.assertIsNotNone(undir)
+        self.assertEqual(undir["hops"], 1)
+
+        # Path between disconnected node d and main
+        no_path = self.g.shortest_path(F("d"), F("main"), directed=False)
+        self.assertIsNone(no_path)
+
+    def test_hubs(self) -> None:
+        hubs = self.g.hubs(node_types=["Function"], limit=5)
+        self.assertTrue(len(hubs) > 0)
+        # Function c has in-degree of 2 (called by b and main)
+        c_hub = next((h for h in hubs if h["id"] == F("c")), None)
+        self.assertIsNotNone(c_hub)
+        self.assertEqual(c_hub["in_degree"], 2)
+
+    def test_subgraph_for_visualization(self) -> None:
+        sub = self.g.subgraph_for_visualization(seeds=[F("main")], hops=1)
+        self.assertIn("nodes", sub)
+        self.assertIn("edges", sub)
+        node_ids = [n["id"] for n in sub["nodes"]]
+        self.assertIn(F("main"), node_ids)
+        self.assertIn(F("a"), node_ids)
+        self.assertIn(F("c"), node_ids)
+        # Verify edge structure
+        self.assertTrue(any(e["source"] == F("main") and e["target"] == F("a") for e in sub["edges"]))
+
 
 class StorageTests(unittest.TestCase):
     def test_round_trip_preserves_everything(self) -> None:

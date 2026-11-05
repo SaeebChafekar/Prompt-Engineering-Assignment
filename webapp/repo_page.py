@@ -9,6 +9,7 @@ from repo_qa.index.search import MODES
 from repo_qa.service import RepoChat, index_repository, list_indexes
 
 from . import resources
+from .graph_canvas import render_interactive_graph_html
 from .theme import confidence_pill
 
 
@@ -267,11 +268,104 @@ def _render_graph_structure(chat: RepoChat) -> None:
     m3.metric("Functions & Classes", counts["nodes"].get("Function", 0) + counts["nodes"].get("Class", 0))
     m4.metric("Source Files", counts["nodes"].get("File", 0))
 
-    graph_tab_nodes, graph_tab_edges, graph_tab_stats = st.tabs([
-        f"📦 Nodes / Entities ({total_nodes})",
-        f"🔗 Edges / Relationships ({total_edges})",
+    graph_tab_vis, graph_tab_hubs, graph_tab_path, graph_tab_nodes, graph_tab_edges, graph_tab_stats = st.tabs([
+        "🕸️ Visual Graph Explorer",
+        "🏛️ Architecture Hubs",
+        "🔍 Call Chain & Path Finder",
+        f"📦 Nodes Table ({total_nodes})",
+        f"🔗 Edges Table ({total_edges})",
         "📊 Summary Statistics",
     ])
+
+    with graph_tab_vis:
+        st.markdown("**Interactive Knowledge Graph Visualization**")
+        st.caption(
+            "Explore nodes (functions, classes, files) and dependency relationships. "
+            "Drag nodes to rearrange, scroll to zoom, click to highlight connections."
+        )
+        ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 1, 1])
+        with ctrl_col1:
+            all_symbols = ["All (Top Architecture Hubs)"] + [graph.label(nid) for nid, d in graph.nodes() if d.get("type") in ("Function", "Class", "File")]
+            seed_choice = ctrl_col1.selectbox("Focus / Seed Symbol", all_symbols, key="kg_vis_seed")
+        with ctrl_col2:
+            hops = ctrl_col2.slider("Neighborhood Hops", min_value=1, max_value=3, value=1, key="kg_vis_hops")
+        with ctrl_col3:
+            min_conf = ctrl_col3.selectbox("Min Confidence", ["guess", "likely", "certain"], index=0, key="kg_vis_conf")
+
+        seeds = None
+        if seed_choice != "All (Top Architecture Hubs)":
+            matches = graph.find(seed_choice.split("::")[-1])
+            if matches:
+                seeds = matches[:2]
+
+        subgraph_data = graph.subgraph_for_visualization(
+            seeds=seeds,
+            hops=hops,
+            max_nodes=50,
+            min_confidence=min_conf,
+        )
+
+        import streamlit.components.v1 as components
+        canvas_html = render_interactive_graph_html(subgraph_data, height=540)
+        components.html(canvas_html, height=560)
+
+    with graph_tab_hubs:
+        st.markdown("**Key Architecture Hubs**")
+        st.caption("Symbols and files with the highest number of dependents (callers and importers).")
+
+        hub_col1, hub_col2 = st.columns(2)
+        with hub_col1:
+            st.markdown("**Most Depended-On Functions**")
+            fn_hubs = graph.hubs(node_types=["Function"], limit=10)
+            if fn_hubs:
+                fn_table = [{"Function": h["label"], "Callers (In)": h["in_degree"], "Calls (Out)": h["out_degree"], "File": h["path"]} for h in fn_hubs]
+                st.dataframe(fn_table, use_container_width=True, hide_index=True)
+            else:
+                st.info("No functions with callers found.")
+
+        with hub_col2:
+            st.markdown("**Most Depended-On Classes & Files**")
+            cls_hubs = graph.hubs(node_types=["Class", "File"], limit=10)
+            if cls_hubs:
+                cls_table = [{"Symbol / File": h["label"], "Type": h["type"], "Dependents (In)": h["in_degree"], "Dependencies (Out)": h["out_degree"]} for h in cls_hubs]
+                st.dataframe(cls_table, use_container_width=True, hide_index=True)
+            else:
+                st.info("No classes or files with dependencies found.")
+
+    with graph_tab_path:
+        st.markdown("**Dependency Path Finder & Call Chain Tracing**")
+        st.caption("Trace how two functions, classes, or files connect through calls, contains, and imports.")
+
+        path_c1, path_c2, path_c3 = st.columns([2, 2, 1])
+        candidate_names = sorted(list({graph.label(nid).split("::")[-1] for nid, _ in graph.nodes()}))
+        with path_c1:
+            src_symbol = path_c1.selectbox("Source Symbol", candidate_names, key="kg_path_src")
+        with path_c2:
+            default_dst_idx = min(1, len(candidate_names) - 1) if candidate_names else 0
+            dst_symbol = path_c2.selectbox("Target Symbol", candidate_names, index=default_dst_idx, key="kg_path_dst")
+        with path_c3:
+            directed_opt = path_c3.checkbox("Directed Call Flow", value=True, key="kg_path_dir", help="Uncheck to find any connection even against call direction.")
+
+        if st.button("Find Dependency Path", key="kg_path_btn"):
+            if src_symbol == dst_symbol:
+                st.info("Source and target are the same symbol.")
+            else:
+                trace = graph.shortest_path(src_symbol, dst_symbol, directed=directed_opt)
+                if not trace and directed_opt:
+                    trace = graph.shortest_path(src_symbol, dst_symbol, directed=False)
+                    if trace:
+                        st.info("No direct forward call flow was found, but an indirect connection exists:")
+
+                if trace:
+                    st.success(f"Path found ({trace['hops']} hops):")
+                    for i, step in enumerate(trace["steps"], 1):
+                        arrow = "➔" if step["direction"] == "outgoing" else "⬅️"
+                        details = f" _({step['details']})_" if step["details"] else ""
+                        st.markdown(
+                            f"**{i}.** `{step['from_label']}` {arrow} **[{step['type']} - {step['confidence']}]** {arrow} `{step['to_label']}`{details}"
+                        )
+                else:
+                    st.warning(f"No connection found between `{src_symbol}` and `{dst_symbol}`.")
 
     with graph_tab_nodes:
         col_filter1, col_filter2 = st.columns([1, 2])

@@ -374,6 +374,15 @@ class RepoPageTests(WebCase):
         self.assertTrue(any("Node ID" in v or "Type" in v for v in df_values))
         self.assertTrue(any("Relationship" in v or "Source" in v for v in df_values))
 
+    def test_knowledge_graph_path_finder_and_hubs(self) -> None:
+        at = self.go_to_repo_page(self.app())
+        self.index_demo(at)
+        self.assertIsNotNone(at.selectbox(key="kg_vis_seed"))
+        self.assertIsNotNone(at.selectbox(key="kg_path_src"))
+        self.assertIsNotNone(at.selectbox(key="kg_path_dst"))
+        at.button(key="kg_path_btn").click().run()
+        self.assertFalse(at.exception)
+
 
 if __name__ == "__main__":
     unittest.main()

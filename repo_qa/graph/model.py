@@ -228,6 +228,174 @@ class KnowledgeGraph:
                     queue.append((other, depth + 1, new_score))
         return sorted(best.values(), key=lambda n: (-n.score, n.distance, n.node_id))
 
+    def shortest_path(
+        self,
+        src: str,
+        dst: str,
+        *,
+        directed: bool = True,
+        min_confidence: str = GUESS,
+        edge_types: Iterable[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Find the shortest dependency or call path between two nodes.
+
+        src and dst can be exact node ids, or names resolvable by find().
+        """
+        src_id = src if src in self.g else (self.find(src)[0] if self.find(src) else None)
+        dst_id = dst if dst in self.g else (self.find(dst)[0] if self.find(dst) else None)
+        if not src_id or not dst_id or src_id not in self.g or dst_id not in self.g:
+            return None
+
+        wanted = set(edge_types) if edge_types is not None else None
+        sub_g = nx.MultiDiGraph()
+        for u, v, k, d in self.g.edges(data=True, keys=True):
+            if wanted is not None and d.get("type") not in wanted:
+                continue
+            if not at_least(d.get("confidence", GUESS), min_confidence):
+                continue
+            sub_g.add_edge(u, v, key=k, **d)
+
+        graph_to_search = sub_g if directed else sub_g.to_undirected()
+        try:
+            path_nodes = nx.shortest_path(graph_to_search, src_id, dst_id)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return None
+
+        steps = []
+        for i in range(len(path_nodes) - 1):
+            u, v = path_nodes[i], path_nodes[i + 1]
+            candidates = []
+            if sub_g.has_edge(u, v):
+                for k, d in sub_g[u][v].items():
+                    candidates.append((d, "outgoing"))
+            if not directed and sub_g.has_edge(v, u):
+                for k, d in sub_g[v][u].items():
+                    candidates.append((d, "incoming"))
+            if not candidates:
+                continue
+            candidates.sort(key=lambda item: -CONFIDENCE_RANK.get(item[0].get("confidence", GUESS), 0))
+            best_edge, direction = candidates[0]
+            steps.append({
+                "from_id": u,
+                "from_label": self.label(u),
+                "to_id": v,
+                "to_label": self.label(v),
+                "direction": direction,
+                "type": best_edge.get("type", ""),
+                "confidence": best_edge.get("confidence", "certain"),
+                "details": (", ".join(best_edge.get("names", [])) if best_edge.get("names") else "") or best_edge.get("via", ""),
+            })
+
+        return {
+            "source_id": src_id,
+            "source_label": self.label(src_id),
+            "target_id": dst_id,
+            "target_label": self.label(dst_id),
+            "directed": directed,
+            "hops": len(steps),
+            "path_nodes": [self.label(n) for n in path_nodes],
+            "steps": steps,
+        }
+
+    def hubs(
+        self,
+        node_types: Iterable[str] | None = None,
+        limit: int = 10,
+        edge_types: Iterable[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the most connected nodes (key architecture hubs), sorted by in-degree."""
+        wanted_node_types = set(node_types) if node_types is not None else None
+        wanted_edge_types = set(edge_types) if edge_types is not None else None
+
+        in_degrees: dict[str, int] = {}
+        out_degrees: dict[str, int] = {}
+        for u, v, data in self.g.edges(data=True):
+            if wanted_edge_types is not None and data.get("type") not in wanted_edge_types:
+                continue
+            out_degrees[u] = out_degrees.get(u, 0) + 1
+            in_degrees[v] = in_degrees.get(v, 0) + 1
+
+        results = []
+        for node_id, data in self.g.nodes(data=True):
+            ntype = data.get("type", "")
+            if wanted_node_types is not None and ntype not in wanted_node_types:
+                continue
+            in_deg = in_degrees.get(node_id, 0)
+            out_deg = out_degrees.get(node_id, 0)
+            if in_deg == 0 and out_deg == 0:
+                continue
+            results.append({
+                "id": node_id,
+                "label": self.label(node_id),
+                "type": ntype,
+                "path": data.get("path", ""),
+                "in_degree": in_deg,
+                "out_degree": out_deg,
+                "total_degree": in_deg + out_deg,
+            })
+        results.sort(key=lambda x: (-x["in_degree"], -x["total_degree"], x["label"]))
+        return results[:limit]
+
+    def subgraph_for_visualization(
+        self,
+        seeds: Iterable[str] | None = None,
+        hops: int = 1,
+        max_nodes: int = 60,
+        edge_types: Iterable[str] | None = None,
+        min_confidence: str = GUESS,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Extract a structured subgraph formatted for visual rendering."""
+        wanted_edges = set(edge_types) if edge_types is not None else None
+
+        seed_list = [s for s in (seeds or []) if s in self.g]
+        if seed_list:
+            neighbors = self.neighbors(seed_list, hops=hops, edge_types=wanted_edges, min_confidence=min_confidence)
+            included = set(seed_list) | {n.node_id for n in neighbors[:max_nodes - len(seed_list)]}
+        else:
+            top_hubs = self.hubs(limit=max_nodes, edge_types=wanted_edges)
+            included = {h["id"] for h in top_hubs}
+            if not included:
+                included = set(list(self.g.nodes)[:max_nodes])
+
+        node_rows = []
+        for nid in sorted(included):
+            data = self.g.nodes[nid]
+            lines = ""
+            if "start_line" in data and "end_line" in data:
+                lines = f"{data['start_line']}-{data['end_line']}"
+            node_rows.append({
+                "id": nid,
+                "label": self.label(nid),
+                "type": data.get("type", "Unknown"),
+                "path": data.get("path", ""),
+                "lines": lines,
+                "is_seed": nid in seed_list,
+            })
+
+        edge_rows = []
+        seen_edges = set()
+        for u in included:
+            for _, v, data in self.g.out_edges(u, data=True):
+                if v not in included:
+                    continue
+                etype = data.get("type", "")
+                if wanted_edges is not None and etype not in wanted_edges:
+                    continue
+                if not at_least(data.get("confidence", GUESS), min_confidence):
+                    continue
+                edge_key = (u, v, etype)
+                if edge_key not in seen_edges:
+                    seen_edges.add(edge_key)
+                    edge_rows.append({
+                        "source": u,
+                        "target": v,
+                        "type": etype,
+                        "confidence": data.get("confidence", "certain"),
+                        "details": (", ".join(data.get("names", [])) if data.get("names") else "") or data.get("via", ""),
+                    })
+
+        return {"nodes": node_rows, "edges": edge_rows}
+
     # ------------------------------------------------------------ chunk links
     def node_id_for_chunk(self, chunk_id: str) -> str | None:
         """The graph node a retrieval chunk belongs to (a vector hit's way into the graph)."""

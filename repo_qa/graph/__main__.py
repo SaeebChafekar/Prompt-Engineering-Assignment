@@ -69,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--callers", metavar="NAME", help="who calls this function or class?")
     parser.add_argument("--callees", metavar="NAME", help="what does this function call?")
     parser.add_argument("--imports", metavar="FILE", help="what does this file import, and who imports it?")
+    parser.add_argument("--hubs", nargs="?", const=10, type=int, help="print top N architecture hubs (most connected symbols)")
+    parser.add_argument("--path", nargs=2, metavar=("SRC", "DST"), help="find shortest dependency path between two symbols")
     parser.add_argument("--min-confidence", choices=sorted(CONFIDENCE_RANK, key=CONFIDENCE_RANK.get), default="guess")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -110,6 +112,23 @@ def main(argv: list[str] | None = None) -> int:
                          graph.edges_of(node_id, incoming=False, edge_types=[EDGE_IMPORTS]))
             _print_edges(graph, f"{graph.label(node_id)} is imported by",
                          graph.edges_of(node_id, incoming=True, edge_types=[EDGE_IMPORTS]))
+    if args.hubs:
+        print(f"\nTop {args.hubs} Architecture Hubs (most connected symbols):")
+        for h in graph.hubs(limit=args.hubs):
+            print(f"  [{h['type']:8s}] {h['label']:35s} (in: {h['in_degree']}, out: {h['out_degree']}, total: {h['total_degree']})")
+    if args.path:
+        src, dst = args.path
+        trace = graph.shortest_path(src, dst, min_confidence=args.min_confidence)
+        if not trace:
+            trace = graph.shortest_path(src, dst, directed=False, min_confidence=args.min_confidence)
+        if trace:
+            direction_note = "directed" if trace["directed"] else "undirected"
+            print(f"\nDependency path ({direction_note}, {trace['hops']} hops):")
+            for i, step in enumerate(trace["steps"], 1):
+                arr = "-->" if step["direction"] == "outgoing" else "<--"
+                print(f"  {i}. {step['from_label']} {arr} [{step['type']} ({step['confidence']})] {arr} {step['to_label']}")
+        else:
+            print(f"\nNo path found between {src!r} and {dst!r}.")
 
     if args.out:
         graph.save(args.out / "graph.json")

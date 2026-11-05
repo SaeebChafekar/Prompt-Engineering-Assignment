@@ -94,6 +94,7 @@ MANIFEST = (
     "tests/test_service.py",
     "tests/test_webapp.py",
     "webapp/__init__.py",
+    "webapp/graph_canvas.py",
     "webapp/repo_page.py",
     "webapp/resources.py",
     "webapp/review_page.py",

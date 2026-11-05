@@ -1,0 +1,8 @@
+# Shared foundation (Ollama / Gemini clients)
+requests>=2.31
+# Knowledge graph (Phase 3)
+networkx>=3.0
+# Vector search (Phase 4): plain numpy, no vector database to install
+numpy>=1.26
+# Web interface (Phase 7). 1.52 or newer is needed for Python 3.14
+streamlit>=1.52

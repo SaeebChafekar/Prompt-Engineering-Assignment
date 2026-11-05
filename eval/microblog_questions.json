@@ -1,0 +1,315 @@
+{
+  "repo": "miguelgrinberg/microblog",
+  "about": "Evaluation questions for the Flask microblog app. 'gold' lists the code that answers each question: 'path::symbol' (a function, method or class) or just 'path'. 'must_include' are words a good answer should contain. Questions with answerable=false ask about things that do not exist in the repository (verified by searching it), so the correct reply is that the code does not contain it.",
+  "questions": [
+    {
+      "id": "q01",
+      "category": "locate",
+      "question": "Where is user login handled?",
+      "answerable": true,
+      "gold": [
+        "app/auth/routes.py::login"
+      ],
+      "must_include": [
+        "login"
+      ]
+    },
+    {
+      "id": "q02",
+      "category": "locate",
+      "question": "Where are passwords hashed and verified?",
+      "answerable": true,
+      "gold": [
+        "app/models.py::User.set_password",
+        "app/models.py::User.check_password"
+      ],
+      "must_include": [
+        "password"
+      ]
+    },
+    {
+      "id": "q03",
+      "category": "locate",
+      "question": "Which function sends the password reset email?",
+      "answerable": true,
+      "gold": [
+        "app/auth/email.py::send_password_reset_email"
+      ],
+      "must_include": [
+        "send_password_reset_email"
+      ]
+    },
+    {
+      "id": "q04",
+      "category": "locate",
+      "question": "Where is the application factory defined?",
+      "answerable": true,
+      "gold": [
+        "app/__init__.py::create_app"
+      ],
+      "must_include": [
+        "create_app"
+      ]
+    },
+    {
+      "id": "q05",
+      "category": "locate",
+      "question": "Where are the 404 and 500 error pages handled?",
+      "answerable": true,
+      "gold": [
+        "app/errors/handlers.py::not_found_error",
+        "app/errors/handlers.py::internal_error"
+      ],
+      "must_include": [
+        "404",
+        "500"
+      ]
+    },
+    {
+      "id": "q06",
+      "category": "locate",
+      "question": "Where is the full-text search for posts implemented?",
+      "answerable": true,
+      "gold": [
+        "app/search.py::query_index",
+        "app/models.py::SearchableMixin"
+      ],
+      "must_include": [
+        "search"
+      ]
+    },
+    {
+      "id": "q07",
+      "category": "locate",
+      "question": "Where is the translation of posts into another language done?",
+      "answerable": true,
+      "gold": [
+        "app/translate.py::translate",
+        "app/main/routes.py::translate_text"
+      ],
+      "must_include": [
+        "translate"
+      ]
+    },
+    {
+      "id": "q08",
+      "category": "locate",
+      "question": "Where is the configuration class and which settings does it define?",
+      "answerable": true,
+      "gold": [
+        "config.py::Config"
+      ],
+      "must_include": [
+        "config"
+      ]
+    },
+    {
+      "id": "q09",
+      "category": "explain",
+      "question": "How does a user follow another user?",
+      "answerable": true,
+      "gold": [
+        "app/main/routes.py::follow",
+        "app/models.py::User.follow"
+      ],
+      "must_include": [
+        "follow"
+      ]
+    },
+    {
+      "id": "q10",
+      "category": "explain",
+      "question": "How are private messages sent between users?",
+      "answerable": true,
+      "gold": [
+        "app/main/routes.py::send_message",
+        "app/models.py::Message"
+      ],
+      "must_include": [
+        "message"
+      ]
+    },
+    {
+      "id": "q11",
+      "category": "explain",
+      "question": "How does exporting a user's posts work in the background?",
+      "answerable": true,
+      "gold": [
+        "app/main/routes.py::export_posts",
+        "app/tasks.py::export_posts",
+        "app/models.py::User.launch_task"
+      ],
+      "must_include": [
+        "task"
+      ]
+    },
+    {
+      "id": "q12",
+      "category": "explain",
+      "question": "How is the API authentication token created and checked?",
+      "answerable": true,
+      "gold": [
+        "app/models.py::User.get_token",
+        "app/models.py::User.check_token",
+        "app/api/tokens.py::get_token"
+      ],
+      "must_include": [
+        "token"
+      ]
+    },
+    {
+      "id": "q13",
+      "category": "explain",
+      "question": "How does the password reset flow work from request to new password?",
+      "answerable": true,
+      "gold": [
+        "app/auth/routes.py::reset_password_request",
+        "app/auth/routes.py::reset_password",
+        "app/models.py::User.get_reset_password_token",
+        "app/auth/email.py::send_password_reset_email"
+      ],
+      "must_include": [
+        "token",
+        "email"
+      ]
+    },
+    {
+      "id": "q14",
+      "category": "relationship",
+      "question": "Which API endpoints require a token?",
+      "answerable": true,
+      "gold": [
+        "app/api/users.py::get_user",
+        "app/api/users.py::get_users",
+        "app/api/users.py::get_followers",
+        "app/api/users.py::get_following",
+        "app/api/users.py::update_user",
+        "app/api/tokens.py::revoke_token"
+      ],
+      "must_include": [
+        "token"
+      ]
+    },
+    {
+      "id": "q15",
+      "category": "relationship",
+      "question": "Which functions call check_password?",
+      "answerable": true,
+      "gold": [
+        "app/auth/routes.py::login",
+        "app/api/auth.py::verify_password"
+      ],
+      "must_include": [
+        "login",
+        "verify_password"
+      ]
+    },
+    {
+      "id": "q16",
+      "category": "relationship",
+      "question": "What does the login view call?",
+      "answerable": true,
+      "gold": [
+        "app/auth/forms.py::LoginForm",
+        "app/models.py::User.check_password"
+      ],
+      "must_include": [
+        "LoginForm",
+        "check_password"
+      ]
+    },
+    {
+      "id": "q17",
+      "category": "relationship",
+      "question": "What classes does the User model inherit from?",
+      "answerable": true,
+      "gold": [
+        "app/models.py::User"
+      ],
+      "must_include": [
+        "UserMixin",
+        "PaginatedAPIMixin"
+      ]
+    },
+    {
+      "id": "q18",
+      "category": "relationship",
+      "question": "Which API endpoint creates a new user, and does it require a token?",
+      "answerable": true,
+      "gold": [
+        "app/api/users.py::create_user"
+      ],
+      "must_include": [
+        "create_user"
+      ]
+    },
+    {
+      "id": "q19",
+      "category": "locate",
+      "question": "Where is pagination implemented for API collections?",
+      "answerable": true,
+      "gold": [
+        "app/models.py::PaginatedAPIMixin.to_collection_dict"
+      ],
+      "must_include": [
+        "to_collection_dict"
+      ]
+    },
+    {
+      "id": "q20",
+      "category": "locate",
+      "question": "Where are blog posts created from the web interface?",
+      "answerable": true,
+      "gold": [
+        "app/main/routes.py::index"
+      ],
+      "must_include": [
+        "index"
+      ]
+    },
+    {
+      "id": "q21",
+      "category": "locate",
+      "question": "Where is the page that shows a user's profile?",
+      "answerable": true,
+      "gold": [
+        "app/main/routes.py::user"
+      ],
+      "must_include": [
+        "user"
+      ]
+    },
+    {
+      "id": "q22",
+      "category": "unanswerable",
+      "question": "Which payment provider does the application use for subscriptions?",
+      "answerable": false,
+      "gold": [],
+      "must_include": []
+    },
+    {
+      "id": "q23",
+      "category": "unanswerable",
+      "question": "Where is the GraphQL schema defined?",
+      "answerable": false,
+      "gold": [],
+      "must_include": []
+    },
+    {
+      "id": "q24",
+      "category": "unanswerable",
+      "question": "How does the app push live notifications to the browser using WebSockets?",
+      "answerable": false,
+      "gold": [],
+      "must_include": []
+    },
+    {
+      "id": "q25",
+      "category": "unanswerable",
+      "question": "How is two-factor authentication implemented?",
+      "answerable": false,
+      "gold": [],
+      "must_include": []
+    }
+  ]
+}
